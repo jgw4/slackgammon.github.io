@@ -1,7 +1,7 @@
 # Slackgammon
 
 Slackgammon is a sleek progressive web app for playing backgammon against a built-in computer engine. It uses a glassy, iOS-inspired interface, supports offline installation as a PWA, and rolls dice with browser cryptographic randomness via `crypto.getRandomValues()`.
-
+![alt text](image.png)
 ## Features
 
 - Playable backgammon board with hits, bar entry, and bearing off
