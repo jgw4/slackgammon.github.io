@@ -1,0 +1,10 @@
+{
+  "name": "slackgammon",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Glassy progressive web app for playing backgammon against a computer engine.",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check app.js && node --check server.js"
+  }
+}
