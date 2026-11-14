@@ -12,27 +12,18 @@
     <link rel="icon" href="icons/icon-192.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="icons/icon-192.svg" />
     <link rel="stylesheet" href="styles.css" />
-    <title>Slackgammon</title>
+    <title>Backgammon</title>
   </head>
   <body>
     <div class="aurora aurora-left"></div>
     <div class="aurora aurora-right"></div>
     <main class="app-shell">
-      <section class="hero">
-        <div>
-          <h1>Slackgammon</h1>
-        </div>
-      </section>
-
       <section class="layout">
-        <section class="board-panel glass-panel">
+        <section class="board-panel">
           <div class="board-frame">
             <div class="left-rail">
               <div class="off-tray off-tray-top">
                 <div id="ai-off-tray" class="tray-stack"></div>
-              </div>
-              <div class="side-controls">
-                <button id="new-game-button" class="primary-button board-side-button">New Game</button>
               </div>
             </div>
 
@@ -40,13 +31,15 @@
               <div class="points top-points left-points" id="top-left-points"></div>
               <div class="points top-points right-points" id="top-right-points"></div>
               <div class="bar-column">
-                <div class="bar-slot">
+                <div class="bar-slot ai-bar-slot">
                   <div id="ai-bar-slot" class="bar-stack"></div>
                 </div>
-                <div class="bar-slot">
+                <div class="bar-slot human-bar-slot">
                   <div id="human-bar-slot" class="bar-stack"></div>
                 </div>
               </div>
+              <button id="cube-button" class="doubling-cube" type="button" aria-label="Double the cube to 2">1</button>
+              <button id="dice-tray" class="dice-tray board-dice player-roll" type="button" aria-label="Roll your dice"></button>
               <div class="points bottom-points left-points" id="bottom-left-points"></div>
               <div class="points bottom-points right-points" id="bottom-right-points"></div>
             </div>
@@ -55,92 +48,105 @@
               <div class="off-tray off-tray-bottom">
                 <div id="human-off-tray" class="tray-stack"></div>
               </div>
-              <div class="side-controls">
-                <button id="roll-button" class="secondary-button board-roll-button">Roll</button>
-                <div id="dice-tray" class="dice-tray side-dice" aria-live="polite"></div>
-              </div>
             </div>
           </div>
 
-          <div class="bottom-dock">
-            <div class="status-card glass-inset">
-              <p class="section-label">Match Status</p>
-              <h2 id="turn-label">Your turn</h2>
-              <p id="status-text">
-                Roll to begin. You play the bright checkers from right to left in Slackgammon.
-              </p>
+          <section class="match-score glass-inset" aria-label="Match score">
+            <div class="match-player">
+              <span>You</span>
+              <strong id="human-match-score">0</strong>
             </div>
-
-            <div class="score-grid">
-              <div class="metric glass-inset">
-                <span class="metric-label">You Off</span>
-                <strong id="human-off-count">0</strong>
-              </div>
-              <div class="metric glass-inset">
-                <span class="metric-label">Engine Off</span>
-                <strong id="ai-off-count">0</strong>
-              </div>
-              <div class="metric glass-inset">
-                <span class="metric-label">You Bar</span>
-                <strong id="human-bar-count">0</strong>
-              </div>
-              <div class="metric glass-inset">
-                <span class="metric-label">Engine Bar</span>
-                <strong id="ai-bar-count">0</strong>
-              </div>
+            <div class="match-target">
+              <span>Race to</span>
+              <strong id="match-target-display">7</strong>
             </div>
-
-            <div class="control-group glass-inset">
-              <div class="slider-row">
-                <label for="difficulty-slider">Engine Difficulty</label>
-                <output id="difficulty-output" for="difficulty-slider">65%</output>
-              </div>
-              <input
-                id="difficulty-slider"
-                type="range"
-                min="0"
-                max="100"
-                value="65"
-              />
-              <p class="help-text">
-                Lower values play looser and noisier. Higher values choose stronger
-                strategic moves.
-              </p>
+            <div class="match-player">
+              <span>Engine</span>
+              <strong id="ai-match-score">0</strong>
             </div>
+            <p id="match-result" class="match-result" hidden></p>
+          </section>
 
-          </div>
         </section>
 
-        <section class="footer-panels">
-          <article class="about-panel glass-panel">
-            <p class="section-label">About</p>
-            <h2>Slackgammon</h2>
+        <details class="options-menu glass-inset">
+          <summary>Options</summary>
+          <div class="control-group">
+            <div class="slider-row">
+              <label for="difficulty-slider">Engine Difficulty</label>
+              <output id="difficulty-output" for="difficulty-slider">65%</output>
+            </div>
+            <input id="difficulty-slider" type="range" min="0" max="100" value="65" />
+            <p class="help-text">
+              Lower values play looser and noisier. Higher values choose stronger
+              strategic moves.
+            </p>
+            <label class="auto-roll-option" for="auto-roll-checkbox">
+              <input id="auto-roll-checkbox" type="checkbox" />
+              Auto-roll
+            </label>
+            <div class="option-with-tip" data-tooltip="Left-click a checker to use the left die. Right-click to use the right die.">
+              <label class="auto-roll-option" for="quick-move-checkbox">
+                <input id="quick-move-checkbox" type="checkbox" />
+                Quick move
+              </label>
+              <button class="info-tip" type="button" aria-label="Left-click a checker to use the left die. Right-click to use the right die.">i</button>
+            </div>
+            <div class="option-row">
+              <label for="target-score-input">Points to win</label>
+              <input id="target-score-input" type="number" min="1" max="99" step="1" value="7" />
+            </div>
+            <div
+              class="option-with-tip"
+              data-tooltip="If a player is 1 point away from winning, the next game is played without the doubling cube. If the player closest to winning does not win that game, use of the doubling cube resumes."
+            >
+              <label class="auto-roll-option" for="crawford-checkbox">
+                <input id="crawford-checkbox" type="checkbox" />
+                Crawford rule
+              </label>
+              <button
+                class="info-tip"
+                type="button"
+                aria-label="If a player is 1 point away from winning, the next game is played without the doubling cube. If the player closest to winning does not win that game, use of the doubling cube resumes."
+              >i</button>
+            </div>
+            <button id="new-game-button" class="secondary-button new-game-button" type="button">New Game</button>
+          </div>
+        </details>
+
+        <details class="about-panel glass-panel">
+          <summary>About</summary>
+          <div class="about-content">
             <p class="footer-copy">
               Slackgammon is a lightweight single-page backgammon app designed to
               feel smooth and modern while staying easy to run locally or deploy
               to static hosting. It includes a built-in engine, installable PWA
-              support, and cryptographically secure dice generation in supported
+              support, and truly random dice generation in supported
               browsers.
             </p>
-          </article>
-
-          <article class="about-panel glass-panel">
-            <p class="section-label">Attributions</p>
+            <h2>How to Play</h2>
+            <ul class="rules-list">
+              <li>Move all 15 of your checkers around the board into your home board, then bear them off. First to bear off all 15 wins.</li>
+              <li>Roll two dice. Each number is a separate move; doubles give you four moves. Use as many dice as legally possible, and use the higher number if only one of two different dice can be played.</li>
+              <li>You may land on an empty point, one occupied by your own checkers, or one occupied by a single opposing checker. Two or more opposing checkers block that point.</li>
+              <li>Landing on a single opposing checker hits it and sends it to the bar. Checkers on the bar must re-enter in the opponent’s home board before any other move.</li>
+              <li>Bear off only after all your active checkers are in your home board. Use an exact roll, or a higher roll only when no checker is on a higher point.</li>
+            </ul>
+            <h2>Scoring</h2>
+            <p class="footer-copy">
+              A single win scores the cube value. A gammon, when the loser bears off none, scores double; a backgammon, when the loser also has a checker on the bar or in your home board, scores triple. Tap the cube to double its value. First to the target score wins. With Crawford enabled, the game after a player reaches one point short is played without the cube.
+            </p>
             <h2>Software and Licenses</h2>
             <ul class="attribution-list">
               <li>Node.js runtime for local development and serving. License: MIT.</li>
-              <li>No third-party npm packages are bundled in this project.</li>
-              <li>Web platform APIs used by the app include HTML, CSS, JavaScript, Service Workers, Web App Manifest, and Web Crypto. These are browser standards rather than bundled third-party libraries.</li>
             </ul>
-          </article>
-        </section>
+          </div>
+        </details>
       </section>
     </main>
 
     <template id="die-template">
-      <div class="die">
-        <span class="die-value"></span>
-      </div>
+      <div class="die" aria-hidden="true"></div>
     </template>
 
     <script type="module" src="app.js"></script>

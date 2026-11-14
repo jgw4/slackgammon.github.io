@@ -9,6 +9,14 @@ const TOP_LEFT_POINTS = [13, 14, 15, 16, 17, 18];
 const TOP_RIGHT_POINTS = [19, 20, 21, 22, 23, 24];
 const BOTTOM_LEFT_POINTS = [12, 11, 10, 9, 8, 7];
 const BOTTOM_RIGHT_POINTS = [6, 5, 4, 3, 2, 1];
+const DIE_PIP_LAYOUTS = {
+  1: [[2, 2]],
+  2: [[1, 1], [3, 3]],
+  3: [[1, 1], [2, 2], [3, 3]],
+  4: [[1, 1], [1, 3], [3, 1], [3, 3]],
+  5: [[1, 1], [1, 3], [2, 2], [3, 1], [3, 3]],
+  6: [[1, 1], [1, 3], [2, 1], [2, 3], [3, 1], [3, 3]],
+};
 const STORAGE_KEY = "slackgammon-state-v1";
 
 const boardFrameEl = document.querySelector(".board-frame");
@@ -21,23 +29,28 @@ const humanBarSlot = document.getElementById("human-bar-slot");
 const aiBarSlot = document.getElementById("ai-bar-slot");
 const humanOffTray = document.getElementById("human-off-tray");
 const aiOffTray = document.getElementById("ai-off-tray");
-const rollButton = document.getElementById("roll-button");
-const newGameButton = document.getElementById("new-game-button");
 const difficultySlider = document.getElementById("difficulty-slider");
 const difficultyOutput = document.getElementById("difficulty-output");
-const statusText = document.getElementById("status-text");
-const turnLabel = document.getElementById("turn-label");
+const autoRollCheckbox = document.getElementById("auto-roll-checkbox");
+const quickMoveCheckbox = document.getElementById("quick-move-checkbox");
+const targetScoreInput = document.getElementById("target-score-input");
+const crawfordCheckbox = document.getElementById("crawford-checkbox");
+const newGameButton = document.getElementById("new-game-button");
 const diceTray = document.getElementById("dice-tray");
-const humanOffCount = document.getElementById("human-off-count");
-const aiOffCount = document.getElementById("ai-off-count");
-const humanBarCount = document.getElementById("human-bar-count");
-const aiBarCount = document.getElementById("ai-bar-count");
+const cubeButton = document.getElementById("cube-button");
+const humanMatchScore = document.getElementById("human-match-score");
+const aiMatchScore = document.getElementById("ai-match-score");
+const matchTargetDisplay = document.getElementById("match-target-display");
+const matchResult = document.getElementById("match-result");
 const dieTemplate = document.getElementById("die-template");
 
 const ui = {
   selectedFrom: null,
   sourceMoves: [],
 };
+let activePointerDrag = null;
+let ignoreNextBoardClick = false;
+let gameEpoch = 0;
 
 const state = loadPersistedState();
 
@@ -60,6 +73,15 @@ function createInitialState() {
     winner: null,
     busy: false,
     difficulty: 65,
+    autoRoll: false,
+    quickMove: false,
+    matchScore: { [HUMAN]: 0, [AI]: 0 },
+    targetScore: 7,
+    crawfordEnabled: false,
+    crawfordGame: false,
+    crawfordUsed: false,
+    cubeValue: 1,
+    matchWinner: null,
   };
 }
 
@@ -94,6 +116,18 @@ function loadPersistedState() {
       winner: parsed.winner === HUMAN || parsed.winner === AI ? parsed.winner : null,
       busy: false,
       difficulty: Number.isFinite(parsed.difficulty) ? clamp(parsed.difficulty, 0, 100) : fallback.difficulty,
+      autoRoll: parsed.autoRoll === true,
+      quickMove: parsed.quickMove === true,
+      matchScore: {
+        [HUMAN]: Number.isFinite(parsed.matchScore?.[HUMAN]) ? Math.max(0, Math.floor(parsed.matchScore[HUMAN])) : 0,
+        [AI]: Number.isFinite(parsed.matchScore?.[AI]) ? Math.max(0, Math.floor(parsed.matchScore[AI])) : 0,
+      },
+      targetScore: Number.isInteger(parsed.targetScore) ? clamp(parsed.targetScore, 1, 99) : fallback.targetScore,
+      crawfordEnabled: parsed.crawfordEnabled === true,
+      crawfordGame: parsed.crawfordGame === true,
+      crawfordUsed: parsed.crawfordUsed === true,
+      cubeValue: Number.isInteger(parsed.cubeValue) && parsed.cubeValue > 0 ? Math.min(64, parsed.cubeValue) : 1,
+      matchWinner: parsed.matchWinner === HUMAN || parsed.matchWinner === AI ? parsed.matchWinner : null,
       turnSequences: [],
     };
 
@@ -122,6 +156,15 @@ function persistState() {
     status: state.status,
     winner: state.winner,
     difficulty: state.difficulty,
+    autoRoll: state.autoRoll,
+    quickMove: state.quickMove,
+    matchScore: state.matchScore,
+    targetScore: state.targetScore,
+    crawfordEnabled: state.crawfordEnabled,
+    crawfordGame: state.crawfordGame,
+    crawfordUsed: state.crawfordUsed,
+    cubeValue: state.cubeValue,
+    matchWinner: state.matchWinner,
   };
 
   try {
@@ -167,28 +210,90 @@ function renderPointRow(container, points, orientation) {
     pointEl.type = "button";
     pointEl.className = `point ${orientation} ${index % 2 === 0 ? "warm" : "cool"}`;
     pointEl.dataset.point = String(point);
-    pointEl.innerHTML = `
-      <span class="point-label">${point}</span>
-      <div class="checker-stack"></div>
-    `;
+    pointEl.setAttribute("aria-label", `Point ${point}`);
+    pointEl.innerHTML = '<div class="checker-stack"></div>';
     container.append(pointEl);
   });
 }
 
 function bindEvents() {
-  rollButton.addEventListener("click", handleRollClick);
-  newGameButton.addEventListener("click", () => {
-    Object.assign(state, createInitialState());
-    resetSelection();
-    render();
+  diceTray.addEventListener("click", (event) => {
+    event.stopPropagation();
+    handleRollClick();
   });
   difficultySlider.addEventListener("input", () => {
     state.difficulty = Number(difficultySlider.value);
     difficultyOutput.value = `${state.difficulty}%`;
     render();
   });
+  autoRollCheckbox.addEventListener("change", () => {
+    state.autoRoll = autoRollCheckbox.checked;
+    render();
+  });
+  quickMoveCheckbox.addEventListener("change", () => {
+    state.quickMove = quickMoveCheckbox.checked;
+    render();
+  });
+  targetScoreInput.addEventListener("change", () => {
+    const target = Number.parseInt(targetScoreInput.value, 10);
+    state.targetScore = Number.isFinite(target) ? clamp(target, 1, 99) : state.targetScore;
+    render();
+  });
+  crawfordCheckbox.addEventListener("change", () => {
+    state.crawfordEnabled = crawfordCheckbox.checked;
+    render();
+  });
+  newGameButton.addEventListener("click", () => {
+    gameEpoch += 1;
+    const settings = {
+      autoRoll: state.autoRoll,
+      quickMove: state.quickMove,
+      difficulty: state.difficulty,
+      targetScore: state.targetScore,
+      crawfordEnabled: state.crawfordEnabled,
+    };
+    Object.assign(state, createInitialState(), settings);
+    resetSelection();
+    activePointerDrag = null;
+    render();
+  });
+  cubeButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (cubeButton.disabled) {
+      return;
+    }
+    state.cubeValue = Math.min(64, state.cubeValue * 2);
+    render();
+  });
+
+  boardFrameEl.addEventListener("pointerdown", handleCheckerPointerDown);
+  boardFrameEl.addEventListener("pointermove", handleCheckerPointerMove);
+  boardFrameEl.addEventListener("pointerup", handleCheckerPointerUp);
+  boardFrameEl.addEventListener("pointercancel", cancelCheckerPointerDrag);
+  boardFrameEl.addEventListener("contextmenu", (event) => {
+    const isDouble = state.lastRoll.length === 2 && state.lastRoll[0] === state.lastRoll[1];
+    if (state.quickMove || isDouble) {
+      event.preventDefault();
+    }
+  });
 
   boardFrameEl.addEventListener("click", (event) => {
+    if (ignoreNextBoardClick) {
+      ignoreNextBoardClick = false;
+      event.preventDefault();
+      return;
+    }
+
+    const checker = event.target.closest(".checker.human");
+    if (checker) {
+      const sourcePoint = checker.closest(".point");
+      const source = sourcePoint?.dataset.point ?? (checker.closest("#human-bar-slot") ? "bar" : null);
+      if (source !== null && tryQuickMoveFromSource(source, event.button)) {
+        event.preventDefault();
+        return;
+      }
+    }
+
     const pointEl = event.target.closest(".point");
     if (pointEl) {
       handlePointClick(Number(pointEl.dataset.point));
@@ -209,9 +314,161 @@ function bindEvents() {
   });
 }
 
-function handleRollClick() {
-  if (state.busy || state.winner) {
+function handleCheckerPointerDown(event) {
+  const checker = event.target.closest(".checker.human");
+  if (!checker || state.busy || state.turn !== HUMAN || state.dice.length === 0 || state.winner) {
     return;
+  }
+
+  const pointEl = checker.closest(".point");
+  const source = pointEl?.dataset.point ?? (checker.closest("#human-bar-slot") ? "bar" : null);
+  if (source === null || !getFirstMoves().some((move) => String(move.from) === String(source))) {
+    return;
+  }
+
+  event.preventDefault();
+  boardFrameEl.setPointerCapture(event.pointerId);
+  activePointerDrag = {
+    pointerId: event.pointerId,
+    source,
+    checker,
+    startX: event.clientX,
+    startY: event.clientY,
+    dragging: false,
+    ghost: null,
+  };
+}
+
+function handleCheckerPointerMove(event) {
+  const drag = activePointerDrag;
+  if (!drag || drag.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+  if (!drag.dragging && distance < 8) {
+    return;
+  }
+
+  event.preventDefault();
+  if (!drag.dragging) {
+    drag.dragging = true;
+    drag.ghost = drag.checker.cloneNode(true);
+    drag.ghost.classList.remove("selectable", "selected");
+    drag.ghost.classList.add("drag-ghost");
+    document.body.append(drag.ghost);
+    ui.selectedFrom = null;
+    ui.sourceMoves = [];
+    handlePointClick(drag.source === "bar" ? "bar" : Number(drag.source));
+  }
+
+  drag.ghost.style.left = `${event.clientX}px`;
+  drag.ghost.style.top = `${event.clientY}px`;
+}
+
+function handleCheckerPointerUp(event) {
+  const drag = activePointerDrag;
+  if (!drag || drag.pointerId !== event.pointerId) {
+    return;
+  }
+
+  event.preventDefault();
+  if (drag.dragging) {
+    const move = findDragMove(event.clientX, event.clientY);
+    if (move) {
+      applyHumanMove(move);
+    }
+  } else {
+    const autoMoved = tryQuickMoveFromSource(drag.source, event.button);
+    if (!autoMoved) {
+      handlePointClick(drag.source === "bar" ? "bar" : Number(drag.source));
+    }
+  }
+
+  finishCheckerPointerDrag();
+  ignoreNextBoardClick = true;
+  window.setTimeout(() => { ignoreNextBoardClick = false; }, 0);
+}
+
+function tryQuickMoveFromSource(source, mouseButton = 0) {
+  if (state.busy || state.turn !== HUMAN || state.dice.length === 0 || state.winner) {
+    return false;
+  }
+
+  const isDouble = state.lastRoll.length === 2 && state.lastRoll[0] === state.lastRoll[1];
+  if (!state.quickMove && !isDouble) {
+    return false;
+  }
+
+  const dieIndex = !isDouble && mouseButton === 2 ? 1 : 0;
+  const dieValue = state.lastRoll[dieIndex];
+  const move = getFirstMoves().find(
+    (candidate) => String(candidate.from) === String(source) && candidate.die === dieValue,
+  );
+  if (!move) {
+    return false;
+  }
+
+  applyHumanMove(move);
+  return true;
+}
+
+function findDragMove(x, y) {
+  const target = document.elementFromPoint(x, y);
+  const pointEl = target?.closest(".point");
+  if (pointEl) {
+    const point = Number(pointEl.dataset.point);
+    return ui.sourceMoves.find((move) => move.to === point) ?? null;
+  }
+
+  const offTray = target?.closest(".off-tray");
+  if (offTray?.querySelector("#human-off-tray")) {
+    return ui.sourceMoves.find((move) => move.to === "off") ?? null;
+  }
+
+  const boardRect = boardEl.getBoundingClientRect();
+  const droppedOutsideBoard = x < boardRect.left || x > boardRect.right || y < boardRect.top || y > boardRect.bottom;
+  return droppedOutsideBoard ? ui.sourceMoves.find((move) => move.to === "off") ?? null : null;
+}
+
+function cancelCheckerPointerDrag(event) {
+  if (activePointerDrag?.pointerId === event.pointerId) {
+    finishCheckerPointerDrag();
+  }
+}
+
+function finishCheckerPointerDrag() {
+  activePointerDrag?.ghost?.remove();
+  activePointerDrag = null;
+}
+
+function handleRollClick() {
+  if (state.busy) {
+    return;
+  }
+
+  if (state.winner) {
+    gameEpoch += 1;
+    const isNewMatch = state.matchWinner !== null;
+    const matchScore = isNewMatch ? { [HUMAN]: 0, [AI]: 0 } : { ...state.matchScore };
+    const crawfordUsed = isNewMatch ? false : state.crawfordUsed;
+    const crawfordGame =
+      !isNewMatch &&
+      state.crawfordEnabled &&
+      !crawfordUsed &&
+      state.targetScore > 1 &&
+      (matchScore[HUMAN] === state.targetScore - 1 || matchScore[AI] === state.targetScore - 1);
+    Object.assign(state, createInitialState(), {
+      autoRoll: state.autoRoll,
+      quickMove: state.quickMove,
+      difficulty: state.difficulty,
+      matchScore,
+      targetScore: state.targetScore,
+      crawfordEnabled: state.crawfordEnabled,
+      crawfordGame,
+      crawfordUsed,
+    });
+    resetSelection();
   }
 
   if (state.dice.length > 0) {
@@ -306,9 +563,7 @@ function applyHumanMove(move) {
   resetSelection();
 
   if (state.off[HUMAN] >= 15) {
-    state.winner = HUMAN;
-    state.status = "You win. Clean bear off.";
-    render();
+    finishGame(HUMAN);
     return;
   }
 
@@ -318,6 +573,29 @@ function applyHumanMove(move) {
   }
 
   state.status = "Nice. Continue using the remaining dice.";
+  render();
+}
+
+function finishGame(winner) {
+  const loser = -winner;
+  let multiplier = 1;
+  if (state.off[loser] === 0) {
+    multiplier = 2;
+    const loserInWinnerHome = winner === HUMAN
+      ? state.points.slice(0, 6).some((point) => point < 0)
+      : state.points.slice(18, 24).some((point) => point > 0);
+    if (state.bar[loser] > 0 || loserInWinnerHome) {
+      multiplier = 3;
+    }
+  }
+
+  state.matchScore[winner] += state.cubeValue * multiplier;
+  state.winner = winner;
+  state.matchWinner = state.matchScore[winner] >= state.targetScore ? winner : null;
+  if (state.crawfordGame) {
+    state.crawfordUsed = true;
+  }
+  state.status = winner === HUMAN ? "You win." : "Engine wins.";
   render();
 }
 
@@ -331,17 +609,31 @@ function endTurn(message) {
   render();
 
   if (state.turn === AI && !state.winner) {
-    window.setTimeout(() => handleRollClick(), 650);
+    const epoch = gameEpoch;
+    window.setTimeout(() => {
+      if (epoch === gameEpoch) handleRollClick();
+    }, 650);
+  } else if (state.turn === HUMAN && state.autoRoll && !state.winner) {
+    const epoch = gameEpoch;
+    window.setTimeout(() => {
+      if (epoch === gameEpoch && state.turn === HUMAN && !state.busy && !state.winner && state.dice.length === 0) {
+        handleRollClick();
+      }
+    }, 350);
   }
 }
 
 function queueAiTurn() {
   state.busy = true;
   render();
-  window.setTimeout(playAiTurn, 500);
+  const epoch = gameEpoch;
+  window.setTimeout(() => {
+    if (epoch === gameEpoch) playAiTurn(epoch);
+  }, 500);
 }
 
-function playAiTurn() {
+function playAiTurn(epoch = gameEpoch) {
+  if (epoch !== gameEpoch) return;
   if (state.turn !== AI || state.winner) {
     state.busy = false;
     render();
@@ -359,13 +651,12 @@ function playAiTurn() {
   let stepIndex = 0;
 
   const step = () => {
+    if (epoch !== gameEpoch) return;
     const move = choice[stepIndex];
     if (!move) {
       state.busy = false;
       if (state.off[AI] >= 15) {
-        state.winner = AI;
-        state.status = "Engine wins this round.";
-        render();
+        finishGame(AI);
         return;
       }
       endTurn("Your turn.");
@@ -410,15 +701,38 @@ function resetSelection() {
 function render() {
   difficultyOutput.value = `${state.difficulty}%`;
   difficultySlider.value = String(state.difficulty);
-  turnLabel.textContent = state.winner
-    ? state.winner === HUMAN ? "You won" : "Engine won"
-    : state.turn === HUMAN ? "Your turn" : "Engine turn";
-  statusText.textContent = state.status;
-  humanOffCount.textContent = String(state.off[HUMAN]);
-  aiOffCount.textContent = String(state.off[AI]);
-  humanBarCount.textContent = String(state.bar[HUMAN]);
-  aiBarCount.textContent = String(state.bar[AI]);
-  rollButton.disabled = state.busy || state.winner !== null || state.dice.length > 0;
+  autoRollCheckbox.checked = state.autoRoll;
+  quickMoveCheckbox.checked = state.quickMove;
+  targetScoreInput.value = String(state.targetScore);
+  crawfordCheckbox.checked = state.crawfordEnabled;
+  humanMatchScore.textContent = String(state.matchScore[HUMAN]);
+  aiMatchScore.textContent = String(state.matchScore[AI]);
+  matchTargetDisplay.textContent = String(state.targetScore);
+  matchResult.hidden = state.matchWinner === null;
+  matchResult.textContent = state.matchWinner === HUMAN ? "You win the match" : "Engine wins the match";
+  cubeButton.textContent = String(state.cubeValue);
+  const cubeAtLimit = state.cubeValue >= 64;
+  cubeButton.disabled = state.winner !== null || state.crawfordGame || state.matchWinner !== null || cubeAtLimit;
+  const cubeUnavailableLabel = state.crawfordGame
+    ? "Doubling cube unavailable in Crawford game"
+    : cubeAtLimit ? "Doubling cube maximum is 64" : `Double the cube to ${state.cubeValue * 2}`;
+  cubeButton.setAttribute("aria-label", cubeUnavailableLabel);
+  cubeButton.title = cubeUnavailableLabel;
+  diceTray.disabled = state.busy || (!state.winner && (state.turn !== HUMAN || state.dice.length > 0));
+  diceTray.classList.toggle("engine-roll", !state.winner && state.turn === AI);
+  diceTray.classList.toggle("player-roll", Boolean(state.winner) || state.turn === HUMAN);
+  diceTray.classList.toggle(
+    "ready-to-roll",
+    !state.busy &&
+      (state.winner || (state.dice.length === 0 && state.turn === HUMAN && !state.autoRoll)),
+  );
+  const diceValues = state.lastRoll.length === 2 ? state.lastRoll.join(" and ") : "six and six";
+  const diceLabel = state.winner
+    ? state.matchWinner ? "Roll to start a new match" : "Roll to start a new game"
+    : state.lastRoll.length === 2
+      ? `${state.turn === AI ? "Computer's dice show" : "Your dice show"} ${diceValues}`
+      : state.turn === AI ? "Computer dice" : "Roll your dice";
+  diceTray.setAttribute("aria-label", diceLabel);
   renderDice();
   renderPoints();
   renderSpecialStacks();
@@ -427,25 +741,25 @@ function render() {
 
 function renderDice() {
   diceTray.innerHTML = "";
-  if (state.lastRoll.length === 0 && state.dice.length === 0) {
-    const idle = dieTemplate.content.firstElementChild.cloneNode(true);
-    idle.classList.add("used");
-    idle.querySelector(".die-value").textContent = "–";
-    diceTray.append(idle);
-    return;
-  }
-
-  const rolledDice = state.lastRoll.length > 0 ? expandDice(state.lastRoll) : [];
+  const isIdle = state.winner !== null || state.lastRoll.length !== 2;
+  const rolledDice = isIdle ? [6, 6] : state.lastRoll;
+  const isDouble = !isIdle && state.lastRoll[0] === state.lastRoll[1];
   const pool = [...state.dice];
   rolledDice.forEach((value) => {
     const dieEl = dieTemplate.content.firstElementChild.cloneNode(true);
     const index = pool.indexOf(value);
-    if (index === -1) {
+    if (!isIdle && index === -1) {
       dieEl.classList.add("used");
-    } else {
+    } else if (!isIdle && !isDouble) {
       pool.splice(index, 1);
     }
-    dieEl.querySelector(".die-value").textContent = String(value);
+    DIE_PIP_LAYOUTS[value].forEach(([row, column]) => {
+      const pip = document.createElement("span");
+      pip.className = "pip";
+      pip.style.gridRow = String(row);
+      pip.style.gridColumn = String(column);
+      dieEl.append(pip);
+    });
     diceTray.append(dieEl);
   });
 }
@@ -501,17 +815,26 @@ function renderPoints() {
 }
 
 function renderSpecialStacks() {
-  renderStack(humanBarSlot, state.bar[HUMAN], "human");
+  const humanCanEnter =
+    state.turn === HUMAN &&
+    !state.busy &&
+    !state.winner &&
+    state.dice.length > 0 &&
+    getFirstMoves().some((move) => move.from === "bar");
+  renderStack(humanBarSlot, state.bar[HUMAN], "human", humanCanEnter);
   renderStack(aiBarSlot, state.bar[AI], "ai");
   renderStack(humanOffTray, state.off[HUMAN], "human");
   renderStack(aiOffTray, state.off[AI], "ai");
 }
 
-function renderStack(container, count, className) {
+function renderStack(container, count, className, selectable = false) {
   container.innerHTML = "";
   for (let index = 0; index < count; index += 1) {
     const checker = document.createElement("div");
     checker.className = `checker ${className}`;
+    if (selectable && index === count - 1) {
+      checker.classList.add("selectable");
+    }
     container.append(checker);
   }
 }
