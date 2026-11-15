@@ -35,14 +35,33 @@ const autoRollCheckbox = document.getElementById("auto-roll-checkbox");
 const quickMoveCheckbox = document.getElementById("quick-move-checkbox");
 const targetScoreInput = document.getElementById("target-score-input");
 const crawfordCheckbox = document.getElementById("crawford-checkbox");
+const doublingEnabledCheckbox = document.getElementById("doubling-enabled-checkbox");
+const cubeAggressivenessSlider = document.getElementById("cube-aggressiveness-slider");
+const cubeAggressivenessOutput = document.getElementById("cube-aggressiveness-output");
 const newGameButton = document.getElementById("new-game-button");
 const diceTray = document.getElementById("dice-tray");
 const cubeButton = document.getElementById("cube-button");
+const cubeOfferPanel = document.getElementById("cube-offer-panel");
+const cubeOfferMessage = document.getElementById("cube-offer-message");
+const cubeOfferActions = document.getElementById("cube-offer-actions");
+const cubeAcceptButton = document.getElementById("cube-accept-button");
+const cubeDropButton = document.getElementById("cube-drop-button");
 const humanMatchScore = document.getElementById("human-match-score");
 const aiMatchScore = document.getElementById("ai-match-score");
 const matchTargetDisplay = document.getElementById("match-target-display");
 const matchResult = document.getElementById("match-result");
 const dieTemplate = document.getElementById("die-template");
+const moveSounds = {
+  empty: new Audio("./sounds/bump.mp3"),
+  occupied: new Audio("./sounds/click.mp3"),
+};
+Object.values(moveSounds).forEach((sound) => {
+  sound.preload = "auto";
+  sound.volume = 0.35;
+});
+const diceRollSound = new Audio("./sounds/diceroll.mp3");
+diceRollSound.preload = "auto";
+diceRollSound.volume = 0.45;
 
 const ui = {
   selectedFrom: null,
@@ -51,6 +70,9 @@ const ui = {
 let activePointerDrag = null;
 let ignoreNextBoardClick = false;
 let gameEpoch = 0;
+const pointResizeObserver = typeof ResizeObserver === "undefined"
+  ? null
+  : new ResizeObserver((entries) => entries.forEach(({ target }) => fitCheckerStack(target)));
 
 const state = loadPersistedState();
 
@@ -66,6 +88,7 @@ function createInitialState() {
     bar: { [HUMAN]: 0, [AI]: 0 },
     off: { [HUMAN]: 0, [AI]: 0 },
     turn: HUMAN,
+    openingRoll: true,
     dice: [],
     lastRoll: [],
     turnSequences: [],
@@ -80,7 +103,11 @@ function createInitialState() {
     crawfordEnabled: false,
     crawfordGame: false,
     crawfordUsed: false,
+    doublingEnabled: true,
+    cubeAggressiveness: 50,
     cubeValue: 1,
+    cubeOwner: null,
+    cubeOffer: null,
     matchWinner: null,
   };
 }
@@ -110,6 +137,7 @@ function loadPersistedState() {
         [AI]: Number(parsed.off?.[AI]) || 0,
       },
       turn: parsed.turn === AI ? AI : HUMAN,
+      openingRoll: parsed.openingRoll === true,
       dice: Array.isArray(parsed.dice) ? parsed.dice.filter(isValidDie) : [],
       lastRoll: Array.isArray(parsed.lastRoll) ? parsed.lastRoll.filter(isValidDie) : [],
       status: typeof parsed.status === "string" ? parsed.status : fallback.status,
@@ -126,10 +154,22 @@ function loadPersistedState() {
       crawfordEnabled: parsed.crawfordEnabled === true,
       crawfordGame: parsed.crawfordGame === true,
       crawfordUsed: parsed.crawfordUsed === true,
+      doublingEnabled: parsed.doublingEnabled !== false,
+      cubeAggressiveness: Number.isFinite(parsed.cubeAggressiveness) ? clamp(parsed.cubeAggressiveness, 0, 100) : fallback.cubeAggressiveness,
       cubeValue: Number.isInteger(parsed.cubeValue) && parsed.cubeValue > 0 ? Math.min(64, parsed.cubeValue) : 1,
+      cubeOwner: parsed.cubeOwner === HUMAN || parsed.cubeOwner === AI ? parsed.cubeOwner : null,
+      cubeOffer: parsed.cubeOffer === HUMAN || parsed.cubeOffer === AI ? parsed.cubeOffer : null,
       matchWinner: parsed.matchWinner === HUMAN || parsed.matchWinner === AI ? parsed.matchWinner : null,
       turnSequences: [],
     };
+
+    if (loaded.crawfordGame) {
+      loaded.cubeValue = 1;
+      loaded.cubeOwner = null;
+      loaded.cubeOffer = null;
+    }
+    if (loaded.autoRoll) loaded.doublingEnabled = false;
+    if (!loaded.doublingEnabled) loaded.cubeOffer = null;
 
     if (loaded.dice.length > 0) {
       loaded.turnSequences = getTurnSequences(loaded, loaded.turn);
@@ -151,6 +191,7 @@ function persistState() {
     bar: state.bar,
     off: state.off,
     turn: state.turn,
+    openingRoll: state.openingRoll,
     dice: state.dice,
     lastRoll: state.lastRoll,
     status: state.status,
@@ -163,7 +204,11 @@ function persistState() {
     crawfordEnabled: state.crawfordEnabled,
     crawfordGame: state.crawfordGame,
     crawfordUsed: state.crawfordUsed,
+    doublingEnabled: state.doublingEnabled,
+    cubeAggressiveness: state.cubeAggressiveness,
     cubeValue: state.cubeValue,
+    cubeOwner: state.cubeOwner,
+    cubeOffer: state.cubeOffer,
     matchWinner: state.matchWinner,
   };
 
@@ -175,7 +220,17 @@ function persistState() {
 }
 
 function resumePersistedTurn() {
-  if (state.winner || state.dice.length === 0) {
+  if (state.winner) {
+    return;
+  }
+
+  if (state.cubeOffer === HUMAN) {
+    respondToHumanDouble();
+    return;
+  }
+  if (state.cubeOffer === AI) return;
+  if (state.dice.length === 0) {
+    if (state.turn === AI) window.setTimeout(handleRollClick, 500);
     return;
   }
 
@@ -201,6 +256,7 @@ function buildBoard() {
   renderPointRow(topRightPointsEl, TOP_RIGHT_POINTS, "top");
   renderPointRow(bottomLeftPointsEl, BOTTOM_LEFT_POINTS, "bottom");
   renderPointRow(bottomRightPointsEl, BOTTOM_RIGHT_POINTS, "bottom");
+  document.querySelectorAll(".point").forEach((pointEl) => pointResizeObserver?.observe(pointEl));
 }
 
 function renderPointRow(container, points, orientation) {
@@ -228,7 +284,11 @@ function bindEvents() {
   });
   autoRollCheckbox.addEventListener("change", () => {
     state.autoRoll = autoRollCheckbox.checked;
-    render();
+    if (state.autoRoll) {
+      setDoublingEnabled(false);
+    } else {
+      render();
+    }
   });
   quickMoveCheckbox.addEventListener("change", () => {
     state.quickMove = quickMoveCheckbox.checked;
@@ -243,6 +303,13 @@ function bindEvents() {
     state.crawfordEnabled = crawfordCheckbox.checked;
     render();
   });
+  doublingEnabledCheckbox.addEventListener("change", () => {
+    setDoublingEnabled(doublingEnabledCheckbox.checked);
+  });
+  cubeAggressivenessSlider.addEventListener("input", () => {
+    state.cubeAggressiveness = Number(cubeAggressivenessSlider.value);
+    render();
+  });
   newGameButton.addEventListener("click", () => {
     gameEpoch += 1;
     const settings = {
@@ -251,6 +318,8 @@ function bindEvents() {
       difficulty: state.difficulty,
       targetScore: state.targetScore,
       crawfordEnabled: state.crawfordEnabled,
+      doublingEnabled: state.doublingEnabled,
+      cubeAggressiveness: state.cubeAggressiveness,
     };
     Object.assign(state, createInitialState(), settings);
     resetSelection();
@@ -262,9 +331,10 @@ function bindEvents() {
     if (cubeButton.disabled) {
       return;
     }
-    state.cubeValue = Math.min(64, state.cubeValue * 2);
-    render();
+    offerDouble(HUMAN);
   });
+  cubeAcceptButton.addEventListener("click", () => acceptCubeOffer());
+  cubeDropButton.addEventListener("click", dropCubeOffer);
 
   boardFrameEl.addEventListener("pointerdown", handleCheckerPointerDown);
   boardFrameEl.addEventListener("pointermove", handleCheckerPointerMove);
@@ -409,7 +479,7 @@ function tryQuickMoveFromSource(source, mouseButton = 0) {
     return false;
   }
 
-  applyHumanMove(move);
+  applyHumanMove(move, true);
   return true;
 }
 
@@ -443,7 +513,7 @@ function finishCheckerPointerDrag() {
 }
 
 function handleRollClick() {
-  if (state.busy) {
+  if (state.busy || state.cubeOffer !== null) {
     return;
   }
 
@@ -465,6 +535,8 @@ function handleRollClick() {
       matchScore,
       targetScore: state.targetScore,
       crawfordEnabled: state.crawfordEnabled,
+      doublingEnabled: state.doublingEnabled,
+      cubeAggressiveness: state.cubeAggressiveness,
       crawfordGame,
       crawfordUsed,
     });
@@ -477,7 +549,38 @@ function handleRollClick() {
     return;
   }
 
+  if (state.openingRoll) {
+    const [engineDie, humanDie] = rollDice();
+    playDiceRollSound();
+    state.lastRoll = [engineDie, humanDie];
+    resetSelection();
+    if (engineDie === humanDie) {
+      state.turn = HUMAN;
+      state.status = "Opening roll is tied. Roll again.";
+      render();
+      return;
+    }
+
+    state.turn = humanDie > engineDie ? HUMAN : AI;
+    state.dice = [engineDie, humanDie];
+    state.turnSequences = getTurnSequences(state, state.turn);
+    if (!hasPendingMoves(state.turnSequences)) {
+      endTurn("No legal opening move. Turn passes to the other player.");
+      return;
+    }
+    state.status = state.turn === HUMAN ? "You won the opening roll." : "Engine won the opening roll.";
+    render();
+    if (state.turn === AI) queueAiTurn();
+    return;
+  }
+
+  if (state.turn === AI && shouldEngineOfferDouble()) {
+    offerDouble(AI);
+    return;
+  }
+
   state.lastRoll = rollDice();
+  playDiceRollSound();
   state.dice = expandDice(state.lastRoll);
   state.turnSequences = getTurnSequences(state, state.turn);
   resetSelection();
@@ -497,6 +600,12 @@ function handleRollClick() {
   queueAiTurn();
 }
 
+function playDiceRollSound() {
+  const playback = diceRollSound.cloneNode();
+  playback.volume = diceRollSound.volume;
+  playback.play().catch(() => {});
+}
+
 function handlePointClick(point) {
   if (state.busy || state.turn !== HUMAN || state.dice.length === 0 || state.winner) {
     return;
@@ -506,7 +615,7 @@ function handlePointClick(point) {
     (move) => String(move.from) === ui.selectedFrom && move.to === point,
   );
   if (directMove) {
-    applyHumanMove(directMove);
+    applyHumanMove(directMove, true);
     return;
   }
 
@@ -542,7 +651,7 @@ function handleHumanOffClick() {
     (candidate) => String(candidate.from) === ui.selectedFrom && candidate.to === "off",
   );
   if (move) {
-    applyHumanMove(move);
+    applyHumanMove(move, true);
   }
 }
 
@@ -556,7 +665,9 @@ function handleBoardDeselect() {
   render();
 }
 
-function applyHumanMove(move) {
+function applyHumanMove(move, animate = false) {
+  const sourceRect = animate ? getCheckerRect(HUMAN, move.from) : null;
+  playMoveSound(HUMAN, move);
   applyMoveToState(state, HUMAN, move);
   removeDie(move.die);
   advanceTurnSequences(move);
@@ -564,22 +675,91 @@ function applyHumanMove(move) {
 
   if (state.off[HUMAN] >= 15) {
     finishGame(HUMAN);
+    if (animate) animateCheckerMove(HUMAN, move, sourceRect);
     return;
   }
 
   if (state.dice.length === 0 || !hasPendingMoves(state.turnSequences)) {
     endTurn("Engine turn.");
+    if (animate) animateCheckerMove(HUMAN, move, sourceRect);
     return;
   }
 
   state.status = "Nice. Continue using the remaining dice.";
   render();
+  if (animate) animateCheckerMove(HUMAN, move, sourceRect);
 }
 
-function finishGame(winner) {
+function playMoveSound(player, move) {
+  const destinationOccupied = move.to === "off"
+    ? state.off[player] > 0
+    : state.points[move.to - 1] !== 0;
+  const sound = moveSounds[destinationOccupied ? "occupied" : "empty"];
+  const playback = sound.cloneNode();
+  playback.volume = sound.volume;
+  playback.play().catch(() => {});
+}
+
+function getCheckerRect(player, location) {
+  const stack = location === "bar"
+    ? document.getElementById(player === HUMAN ? "human-bar-slot" : "ai-bar-slot")
+    : document.querySelector(`.point[data-point="${location}"] .checker-stack`);
+  const checker = stack?.querySelector(".checker.selected, .checker.selectable") ?? stack?.lastElementChild;
+  return checker?.getBoundingClientRect() ?? null;
+}
+
+function animateCheckerMove(player, move, sourceRect) {
+  if (!sourceRect || typeof Element.prototype.animate !== "function") return;
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+
+  const destinationStack = move.to === "off"
+    ? document.getElementById(player === HUMAN ? "human-off-tray" : "ai-off-tray")
+    : document.querySelector(`.point[data-point="${move.to}"] .checker-stack`);
+  const checker = destinationStack?.lastElementChild;
+  if (!checker) return;
+
+  const destinationRect = checker.getBoundingClientRect();
+  const deltaX = destinationRect.left + destinationRect.width / 2 - (sourceRect.left + sourceRect.width / 2);
+  const deltaY = destinationRect.top + destinationRect.height / 2 - (sourceRect.top + sourceRect.height / 2);
+  const arc = clamp(Math.hypot(deltaX, deltaY) * 0.13, 16, 48);
+  const flight = document.createElement("div");
+  flight.className = `checker ${player === HUMAN ? "human" : "ai"} checker-flight`;
+  flight.style.left = `${sourceRect.left}px`;
+  flight.style.top = `${sourceRect.top}px`;
+  flight.style.width = `${sourceRect.width}px`;
+  flight.style.height = `${sourceRect.height}px`;
+  document.body.append(flight);
+  checker.style.visibility = "hidden";
+  let animation;
+  try {
+    animation = flight.animate(
+      [
+        { offset: 0, transform: "translate(0, 0) rotate(-7deg) scale(0.94)" },
+        { offset: 0.55, transform: `translate(${deltaX * 0.48}px, ${deltaY * 0.48 - arc}px) rotate(4deg) scale(1.08)` },
+        { offset: 0.88, transform: `translate(${deltaX * 1.035}px, ${deltaY * 1.035 + 3}px) rotate(-1.5deg) scale(1.02)` },
+        { offset: 1, transform: `translate(${deltaX}px, ${deltaY}px) rotate(0) scale(1)` },
+      ],
+      { duration: 390, easing: "cubic-bezier(0.2, 0.72, 0.28, 1)", fill: "both" },
+    );
+  } catch {
+    checker.style.visibility = "";
+    flight.remove();
+    return;
+  }
+  const settleChecker = () => {
+    checker.style.visibility = "";
+    flight.remove();
+  };
+  animation.onfinish = settleChecker;
+  animation.oncancel = settleChecker;
+}
+
+function finishGame(winner, forcedMultiplier = null) {
   const loser = -winner;
   let multiplier = 1;
-  if (state.off[loser] === 0) {
+  if (forcedMultiplier !== null) {
+    multiplier = forcedMultiplier;
+  } else if (state.off[loser] === 0) {
     multiplier = 2;
     const loserInWinnerHome = winner === HUMAN
       ? state.points.slice(0, 6).some((point) => point < 0)
@@ -599,7 +779,110 @@ function finishGame(winner) {
   render();
 }
 
+function canOfferDouble(player) {
+  return (
+    state.doublingEnabled &&
+    !state.crawfordGame &&
+    !state.openingRoll &&
+    !state.busy &&
+    !state.winner &&
+    state.matchWinner === null &&
+    state.cubeOffer === null &&
+    state.dice.length === 0 &&
+    state.turn === player &&
+    state.cubeValue < 64 &&
+    (state.cubeOwner === null || state.cubeOwner === player)
+  );
+}
+
+function setDoublingEnabled(enabled) {
+  const canceledOffer = state.cubeOffer;
+  state.doublingEnabled = enabled;
+  if (enabled) state.autoRoll = false;
+  if (!enabled && canceledOffer !== null) {
+    state.cubeOffer = null;
+    if (canceledOffer === HUMAN) state.busy = false;
+  }
+  render();
+  if (!enabled && canceledOffer === AI && state.turn === AI) {
+    window.setTimeout(handleRollClick, 0);
+  }
+}
+
+function offerDouble(player) {
+  if (!canOfferDouble(player)) return;
+  state.cubeOffer = player;
+  if (player === HUMAN) {
+    respondToHumanDouble();
+    return;
+  }
+  state.status = "Engine offers to double.";
+  render();
+}
+
+function respondToHumanDouble() {
+  state.busy = true;
+  state.status = "Engine is considering your double.";
+  render();
+  const epoch = gameEpoch;
+  window.setTimeout(() => {
+    if (epoch === gameEpoch && state.cubeOffer === HUMAN) resolveEngineResponse();
+  }, 550);
+}
+
+function resolveEngineResponse() {
+  const winChance = estimateWinChance(state, AI);
+  const takeThreshold = 0.35 - (state.cubeAggressiveness / 100) * 0.15;
+  if (winChance < takeThreshold) {
+    const offerer = state.cubeOffer;
+    state.cubeOffer = null;
+    state.busy = false;
+    finishGame(offerer, 1);
+    return;
+  }
+  acceptCubeOffer(true);
+}
+
+function acceptCubeOffer(engineDecision = false) {
+  if (state.cubeOffer === null || state.cubeOffer === HUMAN && state.busy && !engineDecision) return;
+  const offerer = state.cubeOffer;
+  state.cubeValue = Math.min(64, state.cubeValue * 2);
+  state.cubeOwner = -offerer;
+  state.cubeOffer = null;
+  state.busy = false;
+  state.status = offerer === AI ? "You accept the engine's double." : "Engine accepts your double.";
+  render();
+  if (offerer === AI) handleRollClick();
+}
+
+function dropCubeOffer() {
+  if (state.cubeOffer !== AI) return;
+  const offerer = state.cubeOffer;
+  state.cubeOffer = null;
+  state.busy = false;
+  finishGame(offerer, 1);
+}
+
+function shouldEngineOfferDouble() {
+  if (!canOfferDouble(AI)) return false;
+  const winChance = estimateWinChance(state, AI);
+  const offerThreshold = 0.68 - (state.cubeAggressiveness / 100) * 0.16;
+  return winChance >= offerThreshold;
+}
+
+function estimateWinChance(game, player) {
+  const opponent = -player;
+  const pipAdvantage = pipCount(game, opponent) - pipCount(game, player);
+  const borneOffAdvantage = game.off[player] - game.off[opponent];
+  const barAdvantage = game.bar[opponent] - game.bar[player];
+  const playerHome = player === AI ? countMadePoints(game, AI, 19, 24) : countMadePoints(game, HUMAN, 1, 6);
+  const opponentHome = player === AI ? countMadePoints(game, HUMAN, 1, 6) : countMadePoints(game, AI, 19, 24);
+  const logOdds = pipAdvantage / 55 + borneOffAdvantage * 0.16 + barAdvantage * 0.22 + (playerHome - opponentHome) * 0.025;
+  return 1 / (1 + Math.exp(-logOdds));
+}
+
 function endTurn(message) {
+  state.openingRoll = false;
   state.dice = [];
   state.lastRoll = [];
   state.turnSequences = [];
@@ -616,7 +899,7 @@ function endTurn(message) {
   } else if (state.turn === HUMAN && state.autoRoll && !state.winner) {
     const epoch = gameEpoch;
     window.setTimeout(() => {
-      if (epoch === gameEpoch && state.turn === HUMAN && !state.busy && !state.winner && state.dice.length === 0) {
+      if (epoch === gameEpoch && state.autoRoll && !state.doublingEnabled && state.turn === HUMAN && !state.busy && !state.winner && state.dice.length === 0) {
         handleRollClick();
       }
     }, 350);
@@ -663,11 +946,14 @@ function playAiTurn(epoch = gameEpoch) {
       return;
     }
 
+    const sourceRect = getCheckerRect(AI, move.from);
+    playMoveSound(AI, move);
     applyMoveToState(state, AI, move);
     removeDie(move.die);
     advanceTurnSequences(move);
     state.status = describeAiMove(move);
     render();
+    animateCheckerMove(AI, move, sourceRect);
     stepIndex += 1;
     window.setTimeout(step, 420);
   };
@@ -705,29 +991,57 @@ function render() {
   quickMoveCheckbox.checked = state.quickMove;
   targetScoreInput.value = String(state.targetScore);
   crawfordCheckbox.checked = state.crawfordEnabled;
+  doublingEnabledCheckbox.checked = state.doublingEnabled;
+  cubeAggressivenessSlider.value = String(state.cubeAggressiveness);
+  cubeAggressivenessOutput.value = `${state.cubeAggressiveness}%`;
   humanMatchScore.textContent = String(state.matchScore[HUMAN]);
   aiMatchScore.textContent = String(state.matchScore[AI]);
   matchTargetDisplay.textContent = String(state.targetScore);
   matchResult.hidden = state.matchWinner === null;
   matchResult.textContent = state.matchWinner === HUMAN ? "You win the match" : "Engine wins the match";
-  cubeButton.textContent = String(state.cubeValue);
+  cubeButton.textContent = String(state.cubeOffer === null ? state.cubeValue : state.cubeValue * 2);
   const cubeAtLimit = state.cubeValue >= 64;
-  cubeButton.disabled = state.winner !== null || state.crawfordGame || state.matchWinner !== null || cubeAtLimit;
-  const cubeUnavailableLabel = state.crawfordGame
+  cubeButton.hidden = !state.doublingEnabled;
+  cubeButton.classList.toggle("owner-human", state.cubeOffer === null && state.cubeOwner === HUMAN);
+  cubeButton.classList.toggle("owner-engine", state.cubeOffer === null && state.cubeOwner === AI);
+  cubeButton.disabled = !canOfferDouble(HUMAN);
+  const cubeUnavailableLabel = state.cubeOffer !== null
+    ? `${state.cubeOffer === AI ? "Engine offers" : "You offer"} to double to ${state.cubeValue * 2}`
+    : !state.doublingEnabled
+      ? `Doubling disabled; current stake is ${state.cubeValue}`
+      : state.cubeOwner !== null && state.cubeOwner !== HUMAN
+      ? "Engine owns the doubling cube"
+      : state.crawfordGame
     ? "Doubling cube unavailable in Crawford game"
-    : cubeAtLimit ? "Doubling cube maximum is 64" : `Double the cube to ${state.cubeValue * 2}`;
+    : cubeAtLimit ? "Doubling cube maximum is 64"
+      : state.turn !== HUMAN || state.dice.length > 0 || state.winner
+        ? `Doubling cube value ${state.cubeValue}`
+        : `Offer to double to ${state.cubeValue * 2}`;
   cubeButton.setAttribute("aria-label", cubeUnavailableLabel);
   cubeButton.title = cubeUnavailableLabel;
-  diceTray.disabled = state.busy || (!state.winner && (state.turn !== HUMAN || state.dice.length > 0));
+  cubeOfferPanel.hidden = state.cubeOffer === null;
+  cubeOfferActions.hidden = state.cubeOffer !== AI;
+  cubeOfferMessage.textContent = state.cubeOffer === AI
+    ? `Engine offers to double to ${state.cubeValue * 2}`
+    : state.cubeOffer === HUMAN ? "Engine is considering your double." : "";
+  diceTray.disabled = state.busy || state.cubeOffer !== null || (!state.winner && (state.turn !== HUMAN || state.dice.length > 0));
   diceTray.classList.toggle("engine-roll", !state.winner && state.turn === AI);
   diceTray.classList.toggle("player-roll", Boolean(state.winner) || state.turn === HUMAN);
+  diceTray.classList.toggle("opening-roll", state.openingRoll);
   diceTray.classList.toggle(
     "ready-to-roll",
     !state.busy &&
-      (state.winner || (state.dice.length === 0 && state.turn === HUMAN && !state.autoRoll)),
+      state.cubeOffer === null &&
+      (state.openingRoll && state.dice.length === 0 || state.winner || (state.dice.length === 0 && state.turn === HUMAN && !state.autoRoll)),
   );
   const diceValues = state.lastRoll.length === 2 ? state.lastRoll.join(" and ") : "six and six";
-  const diceLabel = state.winner
+  const diceLabel = state.openingRoll && state.dice.length === 0
+    ? state.lastRoll.length === 2 && state.lastRoll[0] === state.lastRoll[1]
+      ? `Opening roll tied at ${state.lastRoll[0]}; roll again`
+      : "Roll the opening dice"
+    : state.openingRoll
+      ? `Opening dice: engine ${state.lastRoll[0]}, you ${state.lastRoll[1]}; higher roll starts`
+      : state.winner
     ? state.matchWinner ? "Roll to start a new match" : "Roll to start a new game"
     : state.lastRoll.length === 2
       ? `${state.turn === AI ? "Computer's dice show" : "Your dice show"} ${diceValues}`
@@ -741,8 +1055,9 @@ function render() {
 
 function renderDice() {
   diceTray.innerHTML = "";
-  const isIdle = state.winner !== null || state.lastRoll.length !== 2;
-  const rolledDice = isIdle ? [6, 6] : state.lastRoll;
+  const isOpeningReroll = state.openingRoll && state.dice.length === 0 && state.lastRoll.length === 2;
+  const isIdle = state.winner !== null || state.lastRoll.length !== 2 || isOpeningReroll;
+  const rolledDice = isOpeningReroll ? state.lastRoll : isIdle ? [6, 6] : state.lastRoll;
   const isDouble = !isIdle && state.lastRoll[0] === state.lastRoll[1];
   const pool = [...state.dice];
   rolledDice.forEach((value) => {
@@ -782,6 +1097,7 @@ function renderPoints() {
     const count = state.points[point - 1];
     const owner = Math.sign(count);
     const amount = Math.abs(count);
+    stack.classList.toggle("over-cap", amount > 5);
     for (let index = 0; index < amount; index += 1) {
       const checker = document.createElement("div");
       checker.className = `checker ${owner === HUMAN ? "human" : "ai"}`;
@@ -793,6 +1109,7 @@ function renderPoints() {
       }
       stack.append(checker);
     }
+    fitCheckerStack(pointEl, stack);
 
     if (sourceSet.has(String(point)) && state.turn === HUMAN) {
       pointEl.classList.add("interactive");
@@ -845,6 +1162,22 @@ function registerServiceWorker() {
       navigator.serviceWorker.register("./sw.js").catch(() => {});
     });
   }
+}
+
+function fitCheckerStack(pointEl, stack = pointEl.querySelector(".checker-stack")) {
+  const amount = stack.children.length;
+  if (amount <= 5) {
+    stack.style.removeProperty("--checker-step");
+    return;
+  }
+
+  const checkerSize = Number.parseFloat(window.getComputedStyle(stack.firstElementChild).height);
+  const pointStyle = window.getComputedStyle(pointEl);
+  const padding = Number.parseFloat(pointStyle.paddingTop) + Number.parseFloat(pointStyle.paddingBottom);
+  const availableHeight = Math.max(0, pointEl.clientHeight - padding);
+  const maxStepToFit = (availableHeight - checkerSize) / (amount - 1);
+  const checkerStep = Math.max(2, Math.min(checkerSize - 2, maxStepToFit));
+  stack.style.setProperty("--checker-step", `${checkerStep}px`);
 }
 
 function rollDice() {
