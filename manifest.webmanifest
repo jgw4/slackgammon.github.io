@@ -1,24 +1,36 @@
 {
-  "name": "Slackgammon",
-  "short_name": "Slackgammon",
-  "description": "A sleek glassy backgammon PWA with a built-in computer engine.",
+  "name": "Backgammon",
+  "short_name": "Backgammon",
+  "description": "Play backgammon against a computer opponent.",
   "start_url": "./",
   "display": "standalone",
-  "background_color": "#08111f",
-  "theme_color": "#0f172a",
+  "background_color": "#0a2b20",
+  "theme_color": "#174632",
   "orientation": "landscape-primary",
   "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
     {
       "src": "icons/icon-192.svg",
       "sizes": "192x192",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
       "src": "icons/icon-512.svg",
       "sizes": "512x512",
       "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "purpose": "any"
     }
   ]
 }
