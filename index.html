@@ -2,15 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta
       name="description"
       content="Slackgammon is a sleek progressive web app for playing backgammon against a computer engine."
     />
-    <meta name="theme-color" content="#0f172a" />
+    <meta name="theme-color" content="#174632" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Backgammon" />
     <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="icons/icon-192.svg" type="image/svg+xml" />
-    <link rel="apple-touch-icon" href="icons/icon-192.svg" />
+    <link rel="apple-touch-icon" href="icons/icon-180.png" sizes="180x180" />
     <link rel="stylesheet" href="styles.css" />
     <title>Backgammon</title>
   </head>
@@ -39,6 +42,13 @@
                 </div>
               </div>
               <button id="cube-button" class="doubling-cube" type="button" aria-label="Double the cube to 2">1</button>
+              <div id="cube-offer-panel" class="cube-offer-panel" role="group" aria-live="polite" hidden>
+                <p id="cube-offer-message"></p>
+                <div id="cube-offer-actions" class="cube-offer-actions" hidden>
+                  <button id="cube-accept-button" class="secondary-button" type="button">Accept</button>
+                  <button id="cube-drop-button" class="secondary-button" type="button">Drop</button>
+                </div>
+              </div>
               <button id="dice-tray" class="dice-tray board-dice player-roll" type="button" aria-label="Roll your dice"></button>
               <div class="points bottom-points left-points" id="bottom-left-points"></div>
               <div class="points bottom-points right-points" id="bottom-right-points"></div>
@@ -81,6 +91,16 @@
               Lower values play looser and noisier. Higher values choose stronger
               strategic moves.
             </p>
+            <label class="auto-roll-option" for="doubling-enabled-checkbox">
+              <input id="doubling-enabled-checkbox" type="checkbox" checked />
+              Doubling cube
+            </label>
+            <div class="slider-row">
+              <label for="cube-aggressiveness-slider">Doubling aggressiveness</label>
+              <output id="cube-aggressiveness-output" for="cube-aggressiveness-slider">50%</output>
+            </div>
+            <input id="cube-aggressiveness-slider" type="range" min="0" max="100" value="50" />
+            <p class="help-text">Higher values make the engine offer and accept doubles more readily.</p>
             <label class="auto-roll-option" for="auto-roll-checkbox">
               <input id="auto-roll-checkbox" type="checkbox" />
               Auto-roll
@@ -134,11 +154,14 @@
             </ul>
             <h2>Scoring</h2>
             <p class="footer-copy">
-              A single win scores the cube value. A gammon, when the loser bears off none, scores double; a backgammon, when the loser also has a checker on the bar or in your home board, scores triple. Tap the cube to double its value. First to the target score wins. With Crawford enabled, the game after a player reaches one point short is played without the cube.
+              A single win scores the cube value. A gammon, when the loser bears off none, scores double; a backgammon, when the loser also has a checker on the bar or in your home board, scores triple. Offer a double before rolling; the other player may accept the higher stakes or drop and concede the game at the current stakes. First to the target score wins. With Crawford enabled, the game after a player reaches one point short is played without the cube.
             </p>
             <h2>Software and Licenses</h2>
             <ul class="attribution-list">
               <li>Node.js runtime for local development and serving. License: MIT.</li>
+              <li>Click Sound: Click (1).mp3 by 7778 -- https://freesound.org/s/202314/ -- License: Creative Commons 0</li>
+              <li>Bump Sound: tap on felt by emapuree -- https://freesound.org/s/848748/ -- License: Creative Commons 0</li>
+              <li>Dice Roll Sound: rolling dice 1.wav by nettimato -- https://freesound.org/s/353975/ -- License: Creative Commons 0</li>
             </ul>
           </div>
         </details>
