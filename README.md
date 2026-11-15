@@ -34,6 +34,10 @@ npm start
 
 ## Future Development
 
+- sound effects for dice roll
+- better mobile experience
+    - disallow quick move when on mobile
+- over-the board mode
 - adding other variations
     - English Game
     - Irish Game
